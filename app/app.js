@@ -3,7 +3,7 @@
     classifications: "../data/classification_results.json",
     tsne: "../data/tsne_results.json",
     words: "../data/words.txt",
-    imageBase: "../data/"
+    imageBase: "../data/images/"
   };
 
   const state = {
@@ -164,7 +164,10 @@
         sourceTerms: source.terms,
         labelMatch,
         labelStatus: labelMatch ? "Text label match" : "Text label differs",
-        path: `${paths.imageBase}${String(d.path || "").replace(/\\/g, "/")}`,
+        // Accept either a bare filename ("foo.JPEG") or a path that already
+        // includes a folder ("images/foo.JPEG"); strip everything up to and
+        // including the last slash so we always end up with just the basename.
+        path: `${paths.imageBase}${String(d.path || d.image || "").replace(/\\/g, "/").split("/").pop()}`,
         date,
         dateLabel: Number.isNaN(date.getTime()) ? "Unknown" : `${fmtDate(date)} (simulated)`,
         x: Number(tsne[index][0]),

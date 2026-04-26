@@ -100,8 +100,8 @@ for img_name in sorted(os.listdir(input_dir)):
                 ],
                 'source_id': source_id,
                 'source_label': source_label,
-                'path': img_path,  # Use relative path instead of absolute path
-                'date': random_date.isoformat()  # Convert date to ISO format string
+                'path': img_name,
+                'date': random_date.isoformat()
             })
 
 
