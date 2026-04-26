@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Embedding Visualizer</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/d3.v7.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Tiny ImageNet / MobileNetV2 / ResNet101</p>
+      <h1>Image Embedding Visualizer</h1>
+    </div>
+    <div class="status" id="load-status">Loading data...</div>
+  </header>
+
+  <main class="workspace">
+    <aside class="sidebar">
+      <section class="control-panel">
+        <h2>Filters</h2>
+        <label>
+          Predicted class
+          <select id="class-filter">
+            <option value="all">All classes</option>
+          </select>
+        </label>
+        <label>
+          True source class
+          <select id="source-filter">
+            <option value="all">All sources</option>
+          </select>
+        </label>
+        <label>
+          Color and distribution
+          <select id="color-mode">
+            <option value="predicted">Model prediction</option>
+            <option value="source">Dataset label</option>
+            <option value="agreement">Prediction check</option>
+          </select>
+        </label>
+        <label>
+          Search image or class
+          <input id="search-input" type="search" placeholder="window, n09193705...">
+        </label>
+        <label>
+          Minimum confidence
+          <span id="confidence-label">0%</span>
+          <input id="confidence-filter" type="range" min="0" max="100" value="0">
+        </label>
+        <label>
+          Prediction status
+          <select id="match-filter">
+            <option value="all">All images</option>
+            <option value="match">Matches only</option>
+            <option value="mismatch">Mismatches only</option>
+          </select>
+        </label>
+        <label>
+          Grid grouping
+          <select id="grid-group">
+            <option value="source">Dataset label</option>
+            <option value="predicted">Model prediction</option>
+            <option value="agreement">Prediction check</option>
+            <option value="none">No grouping</option>
+          </select>
+        </label>
+        <label>
+          Grid sorting
+          <select id="grid-sort">
+            <option value="confidence-desc">Confidence high to low</option>
+            <option value="confidence-asc">Confidence low to high</option>
+            <option value="date-asc">Date old to new</option>
+            <option value="date-desc">Date new to old</option>
+            <option value="name-asc">Filename A to Z</option>
+          </select>
+        </label>
+        <label>
+          Tile size
+          <span id="tile-size-label">112px</span>
+          <input id="tile-size" type="range" min="72" max="180" value="112">
+        </label>
+        <div class="button-row">
+          <button id="reset-view" type="button">Reset View</button>
+          <button id="clear-selection" type="button">Clear Selection</button>
+        </div>
+      </section>
+
+      <section class="summary-panel" aria-live="polite">
+        <h2>Summary</h2>
+        <dl class="stats">
+          <div><dt>Total images</dt><dd id="stat-total">0</dd></div>
+          <div><dt>Visible</dt><dd id="stat-visible">0</dd></div>
+          <div><dt>Selected</dt><dd id="stat-selected">0</dd></div>
+          <div><dt>Avg confidence</dt><dd id="stat-confidence">0%</dd></div>
+          <div><dt>Label match</dt><dd id="stat-agreement">0%</dd></div>
+        </dl>
+      </section>
+
+      <section class="details-panel">
+        <h2>Image Details</h2>
+        <div id="details-empty" class="empty-state">Select a point to inspect an image.</div>
+        <div id="details-content" class="details-content hidden">
+          <img id="detail-image" alt="">
+          <dl>
+            <div><dt>Image</dt><dd id="detail-name"></dd></div>
+            <div><dt>Predicted</dt><dd id="detail-class"></dd></div>
+            <div><dt>Confidence</dt><dd id="detail-confidence"></dd></div>
+            <div><dt>Source</dt><dd id="detail-source"></dd></div>
+            <div><dt>Check</dt><dd id="detail-agreement"></dd></div>
+            <div><dt>Date</dt><dd id="detail-date"></dd></div>
+          </dl>
+        </div>
+      </section>
+    </aside>
+
+    <section class="main-panel">
+      <div class="chart-header">
+        <div>
+          <h2 id="main-title">Image Grid</h2>
+          <p id="scatter-caption">Images grouped by dataset label.</p>
+        </div>
+        <div class="view-tabs" role="group" aria-label="Main view">
+          <button id="view-grid" class="tab-button active" type="button">Image Grid</button>
+          <button id="view-map" class="tab-button" type="button">Embedding Map</button>
+        </div>
+        <div class="chart-tools" role="group" aria-label="Interaction mode">
+          <button id="mode-pan" class="mode-button active" type="button" title="Pan and zoom">Pan</button>
+          <button id="mode-select" class="mode-button" type="button" title="Box select points">Select</button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+      <div id="image-grid" class="image-grid"></div>
+      <div id="scatter" class="scatter hidden"></div>
+    </section>
+
+    <section class="lower-panel">
+      <div class="analysis-panel">
+        <div class="chart-header compact">
+          <h2 id="bar-title">Model Prediction Distribution</h2>
+          <p id="bar-caption">Top labels in the current filtered view.</p>
+        </div>
+        <div id="bar-chart" class="bar-chart"></div>
+      </div>
+      <div class="analysis-panel">
+        <div class="chart-header compact">
+          <h2>Timeline</h2>
+          <p>Selected images first, then visible images.</p>
+        </div>
+        <div id="timeline" class="timeline"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="tooltip" class="tooltip hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

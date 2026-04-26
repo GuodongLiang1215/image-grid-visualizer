@@ -1,0 +1,28 @@
+.DS_Store
+Thumbs.db
+*.log
+
+# Local editor settings
+.vscode/
+
+# Large raw datasets and personal image folders
+tiny-imagenet-200/
+photos/
+
+# Third-party learning materials copied from external repos
+materials about D3/
+feature_extraction/tsnejs/.git/
+
+# Old experiments kept locally but not needed for the GitHub demo
+display/
+feature_extraction/
+image grading/
+
+# Keep the lightweight, GitHub-ready demo data instead
+!data/
+!data/**
+
+# Python / Node cache
+__pycache__/
+*.pyc
+node_modules/
