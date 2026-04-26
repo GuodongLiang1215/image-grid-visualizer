@@ -29,7 +29,8 @@
     transform: d3.zoomIdentity
   };
 
-  const color = d3.scaleOrdinal(d3.schemeTableau10);
+  const OTHER_LABEL = "Other";
+  const color = d3.scaleOrdinal(d3.schemeTableau10).unknown("#9aa4b2");
   const fmtPercent = d3.format(".1%");
   const fmtDate = d3.timeFormat("%Y-%m-%d");
 
@@ -97,9 +98,10 @@
       const words = parseWords(wordsText);
       state.data = prepareData(classificationData, tsneData, words);
       state.visible = state.data;
+      stabilizeColorDomain();
 
       buildControls();
-    setupCharts();
+      setupCharts();
       setupGrid();
       setupResizeHandler();
       bindEvents();
@@ -114,6 +116,24 @@
         '<div class="empty-state" style="padding:16px">Start the local server with <strong>node server.js</strong>, then open <strong>http://localhost:4173/app/</strong>.</div>'
       );
     }
+  }
+
+  // Build the color domain once, ranking labels by frequency in each mode so
+  // the most common 10 categories get unique colors and the long tail folds
+  // into a single "Other" swatch. Avoids the previous behaviour where the
+  // domain shifted on every legend update.
+  function stabilizeColorDomain() {
+    const buckets = ["predicted", "source", "agreement"];
+    const domain = new Set();
+    buckets.forEach((mode) => {
+      const counts = d3.rollup(state.data, (v) => v.length, (d) => labelInMode(d, mode));
+      Array.from(counts.entries())
+        .sort((a, b) => d3.descending(a[1], b[1]))
+        .slice(0, 10)
+        .forEach(([key]) => domain.add(key));
+    });
+    domain.add(OTHER_LABEL);
+    color.domain(Array.from(domain));
   }
 
   function parseWords(text) {
@@ -141,34 +161,63 @@
     }
 
     return classifications.map((d, index) => {
+      const coord = tsne[index];
+      if (!Array.isArray(coord) || coord.length < 2) {
+        throw new Error(`t-SNE row ${index} is not a [x, y] pair.`);
+      }
       const sourceId = String(d.image || "").match(/^(n\d+)_/)?.[1] || "unknown";
       const source = words.get(sourceId) || { label: sourceId, primary: sourceId, terms: [sourceId] };
       const date = new Date(d.date);
       const predicted = d.class_name || "unknown";
-      const labelMatch = source.terms.some((term) => normalizeLabel(term) === normalizeLabel(predicted));
       const top5 = Array.isArray(d.top5)
         ? d.top5.map((item) => ({
+          classId: item.class_id || item.classId || "",
           className: item.class_name || item.className || "unknown",
           probability: Number(item.probability) || 0
         }))
         : [];
+
+      // Match the source class against the prediction at three increasing
+      // levels of leniency: same WordNet id (only meaningful when the source
+      // wnid is itself an ImageNet-1000 class), text equality of the top-1
+      // label vs any of the source synonyms, or any of those checks but
+      // against the top-5 instead of just the top-1.
+      const top1Id = (d.class_id || top5[0]?.classId || "").toLowerCase();
+      const sourceIdLower = sourceId.toLowerCase();
+      const wnidTop1 = top1Id && sourceIdLower && top1Id === sourceIdLower;
+      const wnidTop5 = top5.some((item) => item.classId && item.classId.toLowerCase() === sourceIdLower);
+      const textTop1 = source.terms.some((term) => normalizeLabel(term) === normalizeLabel(predicted));
+      const textTop5 = top5.some((item) =>
+        source.terms.some((term) => normalizeLabel(term) === normalizeLabel(item.className))
+      );
+
+      const matchTop1 = wnidTop1 || textTop1;
+      const matchTop5 = matchTop1 || wnidTop5 || textTop5;
+      const labelStatus = matchTop1
+        ? "Top-1 match"
+        : matchTop5
+          ? "Top-5 match"
+          : "No match";
+
       return {
         id: index,
         image: d.image,
         predicted,
+        predictedId: top1Id,
         probability: Number(d.probability) || 0,
         top5,
         sourceId,
         sourceName: source.primary,
         sourceLabel: source.label,
         sourceTerms: source.terms,
-        labelMatch,
-        labelStatus: labelMatch ? "Text label match" : "Text label differs",
+        labelMatch: matchTop1,
+        labelMatchTop5: matchTop5,
+        labelStatus,
         path: `${paths.imageBase}${String(d.path || "").replace(/\\/g, "/")}`,
         date,
         dateLabel: Number.isNaN(date.getTime()) ? "Unknown" : `${fmtDate(date)} (simulated)`,
-        x: Number(tsne[index][0]),
-        y: Number(tsne[index][1])
+        x: Number(coord[0]),
+        y: Number(coord[1])
       };
     });
   }
@@ -205,9 +254,10 @@
   }
 
   function setupResizeHandler() {
+    // SVGs use viewBox so they scale automatically; we only need to re-flow
+    // the embedding grid (its column count depends on the container width).
     window.addEventListener("resize", debounce(() => {
-      setupCharts();
-      renderAll();
+      if (state.grid.groupBy === "embedding") renderGrid();
     }, 120));
   }
 
@@ -337,13 +387,11 @@
   function bindEvents() {
     el.classFilter.on("change", (event) => {
       state.filters.predicted = event.target.value;
-      state.selectedIds.clear();
       applyFilters();
     });
 
     el.sourceFilter.on("change", (event) => {
       state.filters.source = event.target.value;
-      state.selectedIds.clear();
       applyFilters();
     });
 
@@ -354,7 +402,6 @@
 
     el.matchFilter.on("change", (event) => {
       state.filters.match = event.target.value;
-      state.selectedIds.clear();
       applyFilters();
     });
 
@@ -377,14 +424,12 @@
 
     el.search.on("input", debounce((event) => {
       state.filters.search = event.target.value.trim().toLowerCase();
-      state.selectedIds.clear();
       applyFilters();
     }, 120));
 
     el.confidence.on("input", (event) => {
       state.filters.confidence = Number(event.target.value) / 100;
       el.confidenceLabel.text(`${event.target.value}%`);
-      state.selectedIds.clear();
       applyFilters();
     });
 
@@ -435,10 +480,22 @@
       const matchesSearch = !state.filters.search || haystack.includes(state.filters.search);
       return matchesClass && matchesSource && matchesConfidence && matchesStatus && matchesSearch;
     });
+    // Drop selections that are no longer visible so the count stays honest
+    // without surprising the user by wiping intentional selections.
+    if (state.selectedIds.size) {
+      const visibleIds = new Set(state.visible.map((d) => d.id));
+      for (const id of state.selectedIds) {
+        if (!visibleIds.has(id)) state.selectedIds.delete(id);
+      }
+    }
+    if (state.activeDatum && !state.visible.some((d) => d.id === state.activeDatum.id)) {
+      state.activeDatum = null;
+    }
     renderAll();
   }
 
   function renderAll() {
+    updateChartCopy();
     renderSummary();
     renderLegend();
     renderGrid();
@@ -462,14 +519,17 @@
 
   function renderLegend() {
     const top = labelCounts(state.visible).slice(0, 8);
-    color.domain(top.map((d) => d.key));
-    updateChartCopy();
-    el.legend
+    const items = el.legend
       .selectAll(".legend-item")
       .data(top, (d) => d.key)
-      .join("div")
-      .attr("class", "legend-item")
-      .html((d) => `<span class="swatch" style="background:${color(d.key)}"></span><span>${escapeHtml(d.key)}</span>`);
+      .join((enter) => {
+        const node = enter.append("div").attr("class", "legend-item");
+        node.append("span").attr("class", "swatch");
+        node.append("span").attr("class", "legend-label");
+        return node;
+      });
+    items.select(".swatch").style("background", (d) => color(d.key));
+    items.select(".legend-label").text((d) => d.key);
   }
 
   function updateChartCopy() {
@@ -837,17 +897,30 @@
   }
 
   function showTooltip(event, d) {
-    el.tooltip
-      .classed("hidden", false)
-      .html(`
-        <img src="${d.path}" alt="">
-        <strong>${escapeHtml(d.image)}</strong><br>
-        ImageNet prediction: ${escapeHtml(d.predicted)}<br>
-        Confidence: ${fmtPercent(d.probability)}<br>
-        Tiny ImageNet label: ${escapeHtml(d.sourceName)}<br>
-        Label comparison: ${escapeHtml(d.labelStatus)}<br>
-        Date: ${escapeHtml(d.dateLabel)}
-      `);
+    const node = el.tooltip.classed("hidden", false).node();
+    node.replaceChildren();
+
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = d.path;
+    node.appendChild(img);
+
+    const lines = [
+      ["", d.image, "strong"],
+      ["ImageNet prediction: ", d.predicted],
+      ["Confidence: ", fmtPercent(d.probability)],
+      ["Tiny ImageNet label: ", d.sourceName],
+      ["Label comparison: ", d.labelStatus],
+      ["Date: ", d.dateLabel]
+    ];
+    lines.forEach(([label, value, tag], i) => {
+      if (label) node.appendChild(document.createTextNode(label));
+      const wrap = document.createElement(tag || "span");
+      wrap.textContent = String(value);
+      node.appendChild(wrap);
+      if (i < lines.length - 1) node.appendChild(document.createElement("br"));
+    });
+
     moveTooltip(event);
   }
 
@@ -881,11 +954,11 @@
     const yExtent = d3.extent(data, (d) => d.y);
     const xSpan = xExtent[1] - xExtent[0] || 1;
     const ySpan = yExtent[1] - yExtent[0] || 1;
-    const occupied = new Set();
-    const cells = d3.range(columns * rows).map((index) => ({
-      column: index % columns,
-      row: Math.floor(index / columns)
-    }));
+
+    // Bitset of occupied cells (one bit per cell, packed as Uint8Array).
+    const occupied = new Uint8Array(columns * rows);
+    const isFree = (c, r) => c >= 0 && c < columns && r >= 0 && r < rows && !occupied[r * columns + c];
+    const occupy = (c, r) => { occupied[r * columns + c] = 1; };
 
     const sorted = data.slice().sort((a, b) => {
       const ay = normalizedGridRow(a, yExtent, ySpan, rows);
@@ -895,22 +968,44 @@
       return d3.ascending(ay, by) || d3.ascending(ax, bx) || compareForGrid(a, b);
     });
 
+    // For each datum, BFS outward in Chebyshev rings from the target cell,
+    // stopping at the first free slot. Worst case O(rings) per item, in
+    // practice near-constant once the grid is mostly empty.
     const items = sorted.map((datum) => {
-      const targetColumn = normalizedGridColumn(datum, xExtent, xSpan, columns);
-      const targetRow = normalizedGridRow(datum, yExtent, ySpan, rows);
-      const best = cells
-        .filter((cellInfo) => !occupied.has(cellKey(cellInfo.column, cellInfo.row)))
-        .sort((a, b) => {
-          const da = gridDistance(a, targetColumn, targetRow);
-          const db = gridDistance(b, targetColumn, targetRow);
-          return d3.ascending(da, db) || d3.ascending(a.row, b.row) || d3.ascending(a.column, b.column);
-        })[0];
-
-      occupied.add(cellKey(best.column, best.row));
-      return { datum, column: best.column, row: best.row };
+      const tc = normalizedGridColumn(datum, xExtent, xSpan, columns);
+      const tr = normalizedGridRow(datum, yExtent, ySpan, rows);
+      const placement = findFreeCell(tc, tr, columns, rows, isFree);
+      occupy(placement.column, placement.row);
+      return { datum, column: placement.column, row: placement.row };
     });
 
     return { columns, rows, items };
+  }
+
+  function findFreeCell(targetColumn, targetRow, columns, rows, isFree) {
+    if (isFree(targetColumn, targetRow)) {
+      return { column: targetColumn, row: targetRow };
+    }
+    const maxRing = Math.max(columns, rows);
+    for (let ring = 1; ring <= maxRing; ring++) {
+      const c0 = targetColumn - ring;
+      const c1 = targetColumn + ring;
+      const r0 = targetRow - ring;
+      const r1 = targetRow + ring;
+      let best = null;
+      let bestDist = Infinity;
+      const consider = (c, r) => {
+        if (!isFree(c, r)) return;
+        const dx = c - targetColumn;
+        const dy = r - targetRow;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; best = { column: c, row: r }; }
+      };
+      for (let c = c0; c <= c1; c++) { consider(c, r0); consider(c, r1); }
+      for (let r = r0 + 1; r < r1; r++) { consider(c0, r); consider(c1, r); }
+      if (best) return best;
+    }
+    return { column: targetColumn, row: targetRow };
   }
 
   function normalizedGridColumn(d, extent, span, columns) {
@@ -919,16 +1014,6 @@
 
   function normalizedGridRow(d, extent, span, rows) {
     return Math.max(0, Math.min(rows - 1, Math.round(((extent[1] - d.y) / span) * (rows - 1))));
-  }
-
-  function gridDistance(cell, targetColumn, targetRow) {
-    const dx = cell.column - targetColumn;
-    const dy = cell.row - targetRow;
-    return dx * dx + dy * dy;
-  }
-
-  function cellKey(column, row) {
-    return `${column}:${row}`;
   }
 
   function groupedGridData() {
@@ -964,10 +1049,15 @@
       .sort((a, b) => d3.descending(a.value, b.value) || d3.ascending(a.key, b.key));
   }
 
-  function labelForMode(d) {
-    if (state.colorBy === "source") return d.sourceName;
-    if (state.colorBy === "agreement") return d.labelStatus;
+  function labelInMode(d, mode) {
+    if (mode === "source") return d.sourceName;
+    if (mode === "agreement") return d.labelStatus;
     return d.predicted;
+  }
+
+  function labelForMode(d) {
+    const raw = labelInMode(d, state.colorBy);
+    return color.domain().includes(raw) ? raw : OTHER_LABEL;
   }
 
   function normalizeLabel(value) {
