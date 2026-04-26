@@ -2,10 +2,12 @@ import os
 import json
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.applications import ResNet101, MobileNetV2
+from tensorflow.keras.applications import ResNet101
 from tensorflow.keras.preprocessing import image
-from tensorflow.keras.applications.resnet import preprocess_input as resnet_preprocess
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input as mobilenet_preprocess, decode_predictions
+from tensorflow.keras.applications.resnet import (
+    preprocess_input as resnet_preprocess,
+    decode_predictions,
+)
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
@@ -42,11 +44,14 @@ def load_tiny_imagenet_words(words_path="../tiny-imagenet-200/words.txt"):
                 labels[parts[0]] = parts[1]
     return labels
 
-# Load ResNet101 model for feature extraction
-resnet_model = ResNet101(weights='imagenet', include_top=False, pooling='avg')
-
-# Load MobileNetV2 model for classification
-mobilenet_model = MobileNetV2(weights='imagenet')
+# Single ResNet101 backbone serves both classification (top=True) and feature
+# extraction (avg-pool layer). One forward pass per image, one set of weights,
+# and the banner ("ResNet101 features / predictions") is now truthful.
+classifier_model = ResNet101(weights='imagenet', include_top=True)
+feature_model = tf.keras.Model(
+    inputs=classifier_model.input,
+    outputs=classifier_model.get_layer('avg_pool').output,
+)
 
 # Directories
 input_dir = 'images'  # Update this path to your images directory
@@ -71,23 +76,20 @@ for img_name in sorted(os.listdir(input_dir)):
         source_id = img_name.split("_")[0]
         source_label = source_labels.get(source_id, source_id)
 
-        # Extract features using ResNet101
         img_array = load_and_preprocess_image(img_path, preprocess_func=resnet_preprocess)
         if img_array is not None:
-            features = resnet_model.predict(img_array).flatten().tolist()
+            features = feature_model.predict(img_array, verbose=0).flatten().tolist()
             features_list.append(features)
 
-            # Classify image using MobileNetV2
-            img_array = load_and_preprocess_image(img_path, preprocess_func=mobilenet_preprocess)
-            predictions = mobilenet_model.predict(img_array)
+            predictions = classifier_model.predict(img_array, verbose=0)
             top_predictions = decode_predictions(predictions, top=5)[0]
             decoded_predictions = top_predictions[0]
 
-            # Generate a random date between the given range
             random_date = get_random_date(start_date, end_date)
 
             classification_results.append({
                 'image': img_name,
+                'class_id': decoded_predictions[0],
                 'class_name': decoded_predictions[1],
                 'probability': float(decoded_predictions[2]),
                 'top5': [
