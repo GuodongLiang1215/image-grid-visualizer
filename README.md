@@ -35,6 +35,25 @@ If port `4173` is already busy, the script will automatically try the next avail
 2. The script writes `features.json`, `classification_results.json`, `pca_results.json`, and `tsne_results.json`. The current app only reads `classification_results.json`, `tsne_results.json`, and `data/words.txt`; the other two files are kept for offline experimentation.
 3. `app/app.js` loads the JSON files served by `server.js` and renders the interactive dashboard.
 
+## Regenerate Data
+
+TensorFlow does not currently provide a standard Windows wheel for Python 3.14. If your default `python` is 3.14 and `pip install tensorflow` reports `No matching distribution found`, install Python 3.11 and run the data script from a 3.11 virtual environment instead.
+
+```powershell
+winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
+py -3.11 -m venv .venv311
+.\.venv311\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+.\.venv311\Scripts\python.exe -m pip install tensorflow scikit-learn matplotlib numpy
+```
+
+Then regenerate the data files:
+
+```powershell
+.\.venv311\Scripts\python.exe scripts\pca_reduce.py --input-dir data\images --words data\words.txt --out-dir data --batch-size 32
+```
+
+On native Windows, TensorFlow 2.11+ uses CPU by default even if CUDA is installed. The warning about GPU support is expected and does not prevent the script from completing.
+
 ## Main Views
 
 - `Image Grid` is the default view for image gridding. Its default `Embedding grid` layout maps t-SNE coordinates into nearby empty grid cells so images keep an approximate neighborhood structure. It can also group by dataset label, model prediction, prediction check, or no grouping.

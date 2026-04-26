@@ -1,6 +1,5 @@
 const http = require("http");
 const fs = require("fs");
-const fsp = require("fs").promises;
 const path = require("path");
 
 const root = __dirname;
@@ -35,37 +34,34 @@ function resolveRequestPath(reqUrl) {
     pathname = "/app/index.html";
   }
 
-  const target = path.normalize(path.join(root, pathname));
-  const rel = path.relative(root, target);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+  let target = path.normalize(path.join(root, pathname));
+  if (!target.startsWith(root)) {
     return null;
   }
+
+  if (fs.existsSync(target) && fs.statSync(target).isDirectory()) {
+    target = path.join(target, "index.html");
+  }
+
   return target;
 }
 
-async function serve(req, res) {
+const server = http.createServer((req, res) => {
   const target = resolveRequestPath(req.url);
   if (!target) {
     send(res, 403, "Forbidden");
     return;
   }
 
-  try {
-    let resolved = target;
-    const stat = await fsp.stat(resolved);
-    if (stat.isDirectory()) {
-      resolved = path.join(resolved, "index.html");
+  fs.readFile(target, (error, data) => {
+    if (error) {
+      send(res, error.code === "ENOENT" ? 404 : 500, error.code === "ENOENT" ? "Not found" : "Server error");
+      return;
     }
-    const data = await fsp.readFile(resolved);
-    const ext = path.extname(resolved).toLowerCase();
-    send(res, 200, data, mimeTypes[ext] || "application/octet-stream");
-  } catch (error) {
-    send(res, error.code === "ENOENT" ? 404 : 500, error.code === "ENOENT" ? "Not found" : "Server error");
-  }
-}
 
-const server = http.createServer((req, res) => {
-  serve(req, res).catch(() => send(res, 500, "Server error"));
+    const ext = path.extname(target).toLowerCase();
+    send(res, 200, data, mimeTypes[ext] || "application/octet-stream");
+  });
 });
 
 function listen(port) {
