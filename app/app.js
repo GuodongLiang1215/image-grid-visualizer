@@ -214,6 +214,17 @@
     const plot = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
     const innerWidth = width - margin.left - margin.right;
     const innerHeight = height - margin.top - margin.bottom;
+    const clipId = "scatter-plot-clip";
+
+    svg.append("defs")
+      .append("clipPath")
+      .attr("id", clipId)
+      .attr("clipPathUnits", "userSpaceOnUse")
+      .append("rect")
+      .attr("x", 0)
+      .attr("y", 0)
+      .attr("width", innerWidth)
+      .attr("height", innerHeight);
 
     const x = d3.scaleLinear()
       .domain(d3.extent(state.data, (d) => d.x)).nice()
@@ -226,7 +237,9 @@
       .attr("class", "axis axis-x")
       .attr("transform", `translate(0,${innerHeight})`);
     plot.append("g").attr("class", "axis axis-y");
-    plot.append("g").attr("class", "points");
+    plot.append("g")
+      .attr("class", "points")
+      .attr("clip-path", `url(#${clipId})`);
     plot.append("g").attr("class", "brush");
 
     const zoom = d3.zoom()
