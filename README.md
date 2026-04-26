@@ -1,107 +1,255 @@
 # Image Grid Visualizer
 
-An interactive image gridding and embedding visualization project for exploring image similarity, model predictions, and Tiny ImageNet source labels.
+An interactive browser dashboard for exploring a small image collection through
+**ResNet101 visual features**, a **t-SNE 2D projection**, and a **classifier
+trained directly on the dataset's actual labels**. Built with vanilla HTML +
+D3 + a Node static server; the heavy ML runs offline as a one-shot Python
+pipeline.
 
-## What Is Included
+The current dataset is **600 images / 10 classes** drawn from
+[Tiny ImageNet](https://www.kaggle.com/c/tiny-imagenet) (a Stanford-curated
+subset of ImageNet at 64×64 resolution). Concretely:
 
-- `app/` contains the final D3 visualization interface.
-- `data/classification_results.json` contains ResNet101 top-5 predictions (and, after running `train_tiny_classifier.py`, replaced with a Tiny ImageNet-aware linear-probe head — see "Classification Accuracy Plan").
-- `data/tsne_results.json` contains 2D t-SNE coordinates.
-- `data/images/` contains the 600 images used by the current visualization.
-- `data/words.txt` is used to decode the source WordNet IDs in image filenames.
-- `app/vendor/d3.v7.js` contains the local D3 dependency.
-- `scripts/pca_reduce.py` is the data-generation script used to create the classification and embedding outputs.
-- `server.js` serves the project locally so JSON and images can be loaded by the browser.
+| WordNet ID | Class | Images |
+|---|---|---|
+| n01443537 | goldfish | 78 |
+| n01629819 | European fire salamander | 18 |
+| n02843684 | birdhouse | 180 |
+| n02909870 | bucket | 108 |
+| n03670208 | limousine | 18 |
+| n03983396 | pop bottle | 24 |
+| n04254777 | sock | 18 |
+| n04376876 | syringe | 18 |
+| n07753592 | banana | 42 |
+| n09193705 | alp | 96 |
 
-## Run
+The 10 classes are a hand-picked subset; the project is intentionally small so
+the whole pipeline runs in minutes on a CPU and the JSON outputs ship with the
+repo.
 
-From this folder:
+## Quick Start
 
 ```bash
 node server.js
+# open http://localhost:4173/app/
 ```
 
-Then open:
+`server.js` is a 60-line Node static server. It auto-increments the port if
+`4173` is busy and prints the URL it bound to.
 
-```text
-http://localhost:4173/app/
+The shipped `data/*.json` files are already up to date, so the dashboard works
+out of the box. Re-running the Python pipeline is only required if you change
+the images, the model, or the classifier.
+
+## What's In The Repo
+
+```
+app/                     vanilla HTML + JS + D3 dashboard
+  index.html             page skeleton (top bar, sidebar, main + lower panels)
+  app.js                 all interaction logic (filters, sort, color modes,
+                         tooltips, bar chart, timeline, brush selection)
+  styles.css
+  vendor/d3.v7.js        local D3 (no CDN at runtime)
+
+data/
+  images/                600 JPEGs at 64×64 native resolution (Tiny ImageNet)
+  features.json          600 × 2048 ResNet101 avg-pool features
+  pca_results.json       600 × 50 PCA-reduced features
+  tsne_results.json      600 × 2 t-SNE coordinates (drives the grid layout)
+  classification_results.json
+                         per-image top-5 from the Tiny-ImageNet-aware
+                         classifier (see "Classification" below)
+  words.txt              WordNet-ID → human-readable label table
+
+scripts/
+  pca_reduce.py          ResNet101 → features → PCA(50) → t-SNE(2)
+                         (TensorFlow + Keras; needs Python 3.11)
+  train_tiny_classifier.py
+                         trains a 10-class head on top of features.json and
+                         overwrites classification_results.json with
+                         cross-validated probabilities
+                         (only needs numpy + scikit-learn)
+
+server.js                Node static file server
 ```
 
-If port `4173` is already busy, the script will automatically try the next available port and print the URL.
+## Data Pipeline (Two Stages)
 
-## Current Workflow
+### Stage 1 — `scripts/pca_reduce.py` (heavy, run once)
 
-1. `scripts/pca_reduce.py` runs a single ResNet101 backbone for both feature extraction (avg-pool layer, 2048-D) and top-5 ImageNet predictions, then PCA-reduces the features and computes t-SNE. Random seeds (`random`, `numpy`, `tf`) are pinned to `42` so re-runs reproduce.
-2. The script writes `features.json`, `classification_results.json`, `pca_results.json`, and `tsne_results.json`. The current app only reads `classification_results.json`, `tsne_results.json`, and `data/words.txt`; the other two files are kept for offline experimentation.
-3. `app/app.js` loads the JSON files served by `server.js` and renders the interactive dashboard.
+A single ResNet101 backbone (ImageNet-pretrained) is loaded with
+`include_top=True`. The same forward pass produces:
 
-## Regenerate Data
+1. **2048-D features** taken from the `avg_pool` layer → `features.json`
+2. **Top-5 ImageNet predictions** from the 1000-class head (these get
+   replaced in stage 2; they are saved as a baseline for comparison)
+3. **PCA(50)** noise reduction → `pca_results.json`
+4. **t-SNE(2)** with `init="pca"`, `learning_rate="auto"`, `random_state=42`
+   → `tsne_results.json`
 
-TensorFlow does not currently provide a standard Windows wheel for Python 3.14. If your default `python` is 3.14 and `pip install tensorflow` reports `No matching distribution found`, install Python 3.11 and run the data script from a 3.11 virtual environment instead.
+Requires: TensorFlow + scikit-learn + numpy + matplotlib in a Python 3.11
+virtual environment. On Windows:
 
 ```powershell
-winget install -e --id Python.Python.3.11 --accept-package-agreements --accept-source-agreements
 py -3.11 -m venv .venv311
-.\.venv311\Scripts\python.exe -m pip install --upgrade pip setuptools wheel
+.\.venv311\Scripts\python.exe -m pip install --upgrade pip
 .\.venv311\Scripts\python.exe -m pip install tensorflow scikit-learn matplotlib numpy
+cd data
+..\.venv311\Scripts\python.exe ..\scripts\pca_reduce.py
+cd ..
 ```
 
-Then regenerate the data files:
+The script uses relative paths (`input_dir = 'images'`), so run it from inside
+`data/`. Re-runs are deterministic thanks to fixed seeds.
+
+### Stage 2 — `scripts/train_tiny_classifier.py` (light, fast)
+
+Tiny ImageNet thumbnails (64×64) upsampled 3.5× to 224×224 do not match the
+distribution that ImageNet-pretrained heads were trained on. The 1000-class
+head from stage 1 collapses on this input and predicts texture classes like
+`window_screen`, `jigsaw_puzzle`, `crossword_puzzle` — top-1 fuzzy accuracy is
+about **3.7%**. That is a data/resolution problem, not a model bug.
+
+This script fixes it without touching the backbone. It:
+
+1. Loads the existing 2048-D features from `data/features.json`.
+2. Reads each filename's WordNet-ID prefix as the ground-truth label.
+3. Per fold, fits a `StandardScaler` (column-wise zero-mean / unit-variance)
+   on training features only.
+4. Trains `LogisticRegression(C=1.0, class_weight='balanced')` on the scaled
+   features against the actual classes present in `data/images/`.
+5. Uses 5-fold stratified cross-validation, so every prediction stored in
+   `classification_results.json` comes from a fold where that image was held
+   out (no train/test leakage).
+6. Overwrites `class_id`, `class_name`, `probability`, and `top5` in
+   `classification_results.json`. The schema is unchanged, so the front-end
+   needs no edits.
 
 ```powershell
-.\.venv311\Scripts\python.exe scripts\pca_reduce.py --input-dir data\images --words data\words.txt --out-dir data --batch-size 32
+.\.venv311\Scripts\python.exe scripts\train_tiny_classifier.py
 ```
 
-On native Windows, TensorFlow 2.11+ uses CPU by default even if CUDA is installed. The warning about GPU support is expected and does not prevent the script from completing.
+Only needs `numpy` + `scikit-learn`. Runs in seconds.
 
-## Main Views
+## Classification Accuracy
 
-- `Image Grid` is the default view for image gridding. Its default `Embedding grid` layout maps t-SNE coordinates into nearby empty grid cells so images keep an approximate neighborhood structure. It can also group by dataset label, model prediction, prediction check, or no grouping.
-- `Embedding Map` keeps the original t-SNE view. Use `Pan` to move around after zooming, and `Select` when you want to box-select points.
-- Grid controls let you filter matches/mismatches, sort by confidence/date/name, and resize image tiles.
+| Stage | Model | Top-1 (CV) |
+|---|---|---|
+| Stage 1 only | ResNet101 ImageNet-1k head, 1000-way | ~3.7% (fuzzy) |
+| Stage 2 — naive | `LogReg(C=1)` on raw features | 84.7% |
+| **Stage 2 — current** | **`StandardScaler` + `LogReg(C=1, balanced)`** | **85.8%** |
+
+Per-class breakdown of the current head:
+
+| Class | n | Accuracy |
+|---|---|---|
+| pop bottle | 24 | 45.8% |
+| sock | 18 | 50.0% |
+| syringe | 18 | 66.7% |
+| salamander | 18 | 77.8% |
+| limousine | 18 | 83.3% |
+| bucket | 108 | 81.5% |
+| banana | 42 | 90.5% |
+| birdhouse | 180 | 90.6% |
+| goldfish | 78 | 92.3% |
+| alp | 96 | 96.9% |
+
+The ceiling here is bounded by data quantity — minority classes only have 18
+samples each, and no choice of linear head can manufacture information that
+isn't there. A much wider ablation (kNN / SVM ensembles, L2 row-norm,
+hyperparameter grids) was tried; the simple StandardScaler + balanced
+LogReg combination above is the only configuration that consistently beats
+84.7% on this data.
+
+## UI Features
+
+**Two main views** (toggle in the top bar):
+
+- `Image Grid` — t-SNE neighborhood-preserving grid. Each image is greedily
+  assigned to the nearest free grid cell from its t-SNE coordinate, so
+  visually-similar images stay close while filling the grid uniformly. Can
+  alternatively be grouped by dataset label, model prediction, or
+  match/mismatch.
+- `Embedding Map` — raw t-SNE scatter plot, with `Pan` / `Box Select` modes.
+
+**Sidebar controls:**
+
+- Filter by predicted class, source label, confidence threshold,
+  match / mismatch.
+- Sort by confidence / date / filename.
+- Adjust tile size.
+- Three color modes: by predicted class, by dataset label, by agreement
+  (prediction vs. source label).
+
+**Lower panels:**
+
+- Bar chart — distribution of predicted classes in the current filtered view.
+- Timeline — simulated dates (generated with seed 42, useful only as
+  a "metadata exists" demo).
+
+**Label comparison logic** is intentionally lenient: a prediction counts as a
+match when the top-1 WordNet ID equals the source WordNet ID, or the top-1 /
+top-5 text overlaps any of the source synonyms. This avoids penalizing
+near-synonyms like *tabby cat* vs. *Egyptian cat*.
+
+## Future Directions
+
+The current pipeline is a baseline. The two highest-impact next steps:
+
+### Tier 2 — Stronger backbone for small images
+
+ResNet101 was trained on 224×224 photos and is suboptimal for 64×64 input.
+Replacing it with a backbone that handles small / varied inputs better would
+give cleaner features:
+
+- **DINOv2 (small)** — self-supervised, robust across resolutions, strong
+  feature geometry; drop-in replacement for the ResNet101 stage.
+- **CLIP (ViT-B/32)** — slightly larger, but adds a free open-vocabulary
+  capability if the project later wants text search / zero-shot labels.
+
+Only `scripts/pca_reduce.py` needs to change. `features.json`,
+`pca_results.json`, `tsne_results.json`, and `classification_results.json`
+get regenerated; the front end and the stage-2 classifier work unchanged
+because the JSON schema is the same.
+
+Expected accuracy gain: **+3 to +5 points** (ceiling ~92%).
+
+### Tier 3 — Train a backbone on full Tiny ImageNet
+
+The most principled fix: stop using a 224-pretrained backbone on 64×64
+inputs at all. Instead, train a small CIFAR-style CNN (e.g. ResNet-20 /
+WideResNet-16) **directly on the full 200-class Tiny ImageNet training
+set** (~100k images). The resulting backbone is purpose-built for 64×64,
+and its features feed the same stage-2 head.
+
+Only the `train/` split is needed (≈ 200 MB on disk). `val/` and `test/`
+are not used because evaluation is done on the project's own 600-image
+subset via 5-fold CV.
+
+Expected accuracy gain: **85.8% → 92–95%**.
+
+### Tier 4 — Live single-image upload
+
+Add a `POST /api/predict` endpoint (FastAPI sidecar) that takes an uploaded
+image, runs the same backbone + stage-2 head, and returns top-5 predictions.
+Optionally project the new image into the existing t-SNE map via k-NN on
+features. This is mostly UX work; modeling is unchanged.
+
+### Smaller-scope ideas
+
+- Add UMAP as an alternative projection (faster, better global structure).
+- Add trustworthiness / nearest-neighbor-overlap projection metrics.
+- Add freehand lasso selection in the embedding map.
+- Replace the simulated dates with real metadata once a real source
+  is available.
 
 ## Notes
 
-- The current dates in `classification_results.json` are simulated random dates generated by `pca_reduce.py` with a fixed seed.
-- The visualization can color by model prediction, Tiny ImageNet source label, or whether those label texts match.
-- ImageNet-pretrained predictions (1000 classes) are not the same thing as a classifier trained on the 200 Tiny ImageNet classes. Use the dataset-label mode when you need the source-category view, or run `scripts/train_tiny_classifier.py` to replace the ImageNet head with one trained on the actual subset of dataset classes (see "Classification Accuracy Plan").
-- The "Label comparison" check is lenient: it counts a match when (a) the top-1 WordNet id equals the source wnid, (b) the top-1 text equals one of the source synonyms, or (c) any of the top-5 predictions hit either of those. This is more honest than a strict top-1 text equality, since ImageNet has many near-synonyms (e.g. *tabby cat* vs *Egyptian cat*).
-- The old experimental folders are kept locally but are intentionally excluded from the GitHub-ready project.
-
-## Algorithm Positioning
-
-The current public app uses a conservative, browser-friendly pipeline:
-
-- ResNet101 pooled image features for visual similarity.
-- PCA before t-SNE to reduce noise and runtime.
-- t-SNE as the displayed embedding, with `init="pca"`, `learning_rate="auto"`, a fixed random seed, and a bounded perplexity in the generation script.
-- D3 brush selection for stable rectangular selection in the embedding map.
-- A grid-assignment pass that places each image into the nearest available grid cell from its t-SNE coordinate.
-
-For a stronger research version, the best next upgrade is:
-
-1. Replace ResNet101 features with DINOv2 for visual similarity or CLIP when text search/zero-shot labels matter.
-2. Add UMAP as the main projection for faster iteration and better global structure, while keeping t-SNE as a comparison view.
-3. Add projection-quality metrics such as trustworthiness and nearest-neighbor overlap.
-4. Add freehand lasso selection only after the current box selection workflow is stable.
-
-## Classification Accuracy Plan
-
-`pca_reduce.py` runs ResNet101 on 224×224 inputs, but the source images are 64×64 Tiny ImageNet thumbnails upsampled 3.5×. ImageNet-pretrained heads collapse on that distribution shift — top predictions degenerate into texture classes (`window_screen`, `jigsaw_puzzle`, `crossword_puzzle`) and top-1 fuzzy accuracy on this subset drops to single digits. That is a data/resolution problem, not a model bug.
-
-The fix shipped in this repo is `scripts/train_tiny_classifier.py`. It:
-
-1. Loads the existing 2048-D ResNet101 features from `data/features.json`.
-2. Reads the WordNet ID prefix of each filename as the ground-truth label and resolves the human-readable name through `data/words.txt`.
-3. Trains a multinomial logistic regression head over the actual classes present in the dataset, using 5-fold stratified cross-validation so every prediction in `classification_results.json` comes from a fold where that image was held out (no train/test leakage).
-4. Overwrites `class_id`, `class_name`, `probability`, and `top5` in `classification_results.json` with the cross-validated probabilities. The UI fields stay schema-compatible, so no front-end change is required.
-
-This trades the 1000-class ImageNet head (mostly wrong on Tiny ImageNet thumbnails) for a small linear classifier over the classes that actually appear in `data/images/`. On the current 10-class subset it lifts top-1 fuzzy accuracy from ~3.7% to >95%.
-
-The three `Color and distribution` modes still work:
-
-- `Model prediction` now shows the Tiny ImageNet-aware head's output.
-- `Dataset label` shows the source class decoded from the WordNet ID in each filename.
-- `Prediction check` highlights whether the prediction text matches one of the source-label terms.
-
-To regenerate, run `pca_reduce.py` first (or skip it if `features.json` already exists), then run `train_tiny_classifier.py`. The latter does not require TensorFlow or model weights — only `numpy` and `scikit-learn`.
+- The dates in `classification_results.json` are simulated random dates
+  generated with seed 42. They are intentional placeholders and not real
+  metadata.
+- Random seeds are fixed (`random`, `numpy`, `tf`, `sklearn`) so any
+  re-generation of the data files is reproducible.
+- `data/images/` ships in the repo so the dashboard works without
+  re-running anything. The full Tiny ImageNet 200-class dataset is not
+  included.
