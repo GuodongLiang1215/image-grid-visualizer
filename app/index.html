@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">Tiny ImageNet / MobileNetV2 / ResNet101</p>
+      <p class="eyebrow">Tiny ImageNet / ResNet101 features / t-SNE grid</p>
       <h1>Image Embedding Visualizer</h1>
     </div>
     <div class="status" id="load-status">Loading data...</div>
@@ -27,7 +27,7 @@
           </select>
         </label>
         <label>
-          True source class
+          Tiny ImageNet source label
           <select id="source-filter">
             <option value="all">All sources</option>
           </select>
@@ -50,7 +50,7 @@
           <input id="confidence-filter" type="range" min="0" max="100" value="0">
         </label>
         <label>
-          Prediction status
+          Label comparison
           <select id="match-filter">
             <option value="all">All images</option>
             <option value="match">Matches only</option>
@@ -58,8 +58,9 @@
           </select>
         </label>
         <label>
-          Grid grouping
+          Grid layout
           <select id="grid-group">
+            <option value="embedding">Embedding grid</option>
             <option value="source">Dataset label</option>
             <option value="predicted">Model prediction</option>
             <option value="agreement">Prediction check</option>
@@ -98,18 +99,24 @@
         </dl>
       </section>
 
+      <section class="method-panel">
+        <h2>Method Notes</h2>
+        <p>The grid preserves t-SNE neighborhood structure by assigning images to nearby empty grid cells. Label checks compare ImageNet prediction text with Tiny ImageNet source-label text.</p>
+      </section>
+
       <section class="details-panel">
         <h2>Image Details</h2>
-        <div id="details-empty" class="empty-state">Select a point to inspect an image.</div>
+        <div id="details-empty" class="empty-state">Select an image or point to inspect it.</div>
         <div id="details-content" class="details-content hidden">
           <img id="detail-image" alt="">
           <dl>
             <div><dt>Image</dt><dd id="detail-name"></dd></div>
-            <div><dt>Predicted</dt><dd id="detail-class"></dd></div>
+            <div><dt>ImageNet prediction</dt><dd id="detail-class"></dd></div>
             <div><dt>Confidence</dt><dd id="detail-confidence"></dd></div>
-            <div><dt>Source</dt><dd id="detail-source"></dd></div>
-            <div><dt>Check</dt><dd id="detail-agreement"></dd></div>
-            <div><dt>Date</dt><dd id="detail-date"></dd></div>
+            <div><dt>Tiny ImageNet label</dt><dd id="detail-source"></dd></div>
+            <div><dt>Label comparison</dt><dd id="detail-agreement"></dd></div>
+            <div><dt>Top-5 predictions</dt><dd id="detail-top5"></dd></div>
+            <div><dt>Date field</dt><dd id="detail-date"></dd></div>
           </dl>
         </div>
       </section>
@@ -127,7 +134,7 @@
         </div>
         <div class="chart-tools" role="group" aria-label="Interaction mode">
           <button id="mode-pan" class="mode-button active" type="button" title="Pan and zoom">Pan</button>
-          <button id="mode-select" class="mode-button" type="button" title="Box select points">Select</button>
+          <button id="mode-select" class="mode-button" type="button" title="Box select points">Box Select</button>
         </div>
         <div class="legend" id="legend"></div>
       </div>
@@ -146,7 +153,7 @@
       <div class="analysis-panel">
         <div class="chart-header compact">
           <h2>Timeline</h2>
-          <p>Selected images first, then visible images.</p>
+          <p>Selected images first, then visible images. Dates are simulated metadata.</p>
         </div>
         <div id="timeline" class="timeline"></div>
       </div>

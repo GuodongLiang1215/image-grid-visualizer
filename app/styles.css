@@ -95,6 +95,7 @@ h2 {
 
 .control-panel,
 .summary-panel,
+.method-panel,
 .details-panel {
   padding: 16px;
   border-bottom: 1px solid var(--line);
@@ -202,6 +203,13 @@ dd {
   line-height: 1.45;
 }
 
+.method-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .main-panel {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -301,6 +309,14 @@ dd {
   overflow: auto;
   padding: 16px;
   background: #fbfcfd;
+}
+
+.image-grid.embedding-mode {
+  background:
+    linear-gradient(#eef2f7 1px, transparent 1px),
+    linear-gradient(90deg, #eef2f7 1px, transparent 1px),
+    #fbfcfd;
+  background-size: var(--tile-size, 112px) var(--tile-size, 112px);
 }
 
 .grid-section {
@@ -432,6 +448,64 @@ dd {
 .tile-badge.mismatch {
   background: #ffedd5;
   color: #9a3412;
+}
+
+.embedding-grid-shell {
+  min-width: max-content;
+}
+
+.embedding-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--embedding-columns), var(--embedding-cell-size));
+  grid-template-rows: repeat(var(--embedding-rows), var(--embedding-cell-size));
+  gap: 8px;
+  align-items: stretch;
+  justify-items: stretch;
+  padding-top: 12px;
+}
+
+.embedding-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(31, 41, 51, 0.08);
+  overflow: hidden;
+}
+
+.embedding-tile:hover,
+.embedding-tile:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(8, 127, 140, 0.24), 0 3px 10px rgba(31, 41, 51, 0.08);
+}
+
+.embedding-tile.selected {
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.22);
+}
+
+.embedding-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: var(--panel-strong);
+}
+
+.embedding-tile-badge {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(17, 24, 39, 0.78);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.1;
 }
 
 .scatter svg,

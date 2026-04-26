@@ -112,8 +112,16 @@ features_array = np.array(features_list)
 pca = PCA(n_components=50)  # Reduce to 50 components first
 pca_results = pca.fit_transform(features_array)
 
-# Perform t-SNE on PCA-reduced data
-tsne = TSNE(n_components=2, random_state=42)
+# Perform t-SNE on PCA-reduced data.
+# init="pca" and learning_rate="auto" follow current scikit-learn guidance for
+# more stable embeddings than the old fully default configuration.
+tsne = TSNE(
+    n_components=2,
+    perplexity=min(30, max(5, (len(pca_results) - 1) // 3)),
+    init="pca",
+    learning_rate="auto",
+    random_state=42
+)
 tsne_results = tsne.fit_transform(pca_results).tolist()
 
 # Save features to JSON

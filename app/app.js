@@ -22,7 +22,7 @@
     mainView: "grid",
     interactionMode: "pan",
     grid: {
-      groupBy: "source",
+      groupBy: "embedding",
       sortBy: "confidence-desc",
       tileSize: 112
     },
@@ -76,6 +76,7 @@
     detailConfidence: d3.select("#detail-confidence"),
     detailSource: d3.select("#detail-source"),
     detailAgreement: d3.select("#detail-agreement"),
+    detailTop5: d3.select("#detail-top5"),
     detailDate: d3.select("#detail-date")
   };
 
@@ -145,20 +146,27 @@
       const date = new Date(d.date);
       const predicted = d.class_name || "unknown";
       const labelMatch = source.terms.some((term) => normalizeLabel(term) === normalizeLabel(predicted));
+      const top5 = Array.isArray(d.top5)
+        ? d.top5.map((item) => ({
+          className: item.class_name || item.className || "unknown",
+          probability: Number(item.probability) || 0
+        }))
+        : [];
       return {
         id: index,
         image: d.image,
         predicted,
         probability: Number(d.probability) || 0,
+        top5,
         sourceId,
         sourceName: source.primary,
         sourceLabel: source.label,
         sourceTerms: source.terms,
         labelMatch,
-        labelStatus: labelMatch ? "Matches source label" : "Different from source label",
+        labelStatus: labelMatch ? "Text label match" : "Text label differs",
         path: `${paths.imageBase}${String(d.path || "").replace(/\\/g, "/")}`,
         date,
-        dateLabel: Number.isNaN(date.getTime()) ? "Unknown" : fmtDate(date),
+        dateLabel: Number.isNaN(date.getTime()) ? "Unknown" : `${fmtDate(date)} (simulated)`,
         x: Number(tsne[index][0]),
         y: Number(tsne[index][1])
       };
@@ -364,6 +372,7 @@
       state.grid.tileSize = Number(event.target.value);
       el.tileSizeLabel.text(`${state.grid.tileSize}px`);
       el.imageGrid.style("--tile-size", `${state.grid.tileSize}px`);
+      if (state.grid.groupBy === "embedding") renderGrid();
     });
 
     el.search.on("input", debounce((event) => {
@@ -465,8 +474,12 @@
 
   function updateChartCopy() {
     if (state.mainView === "grid") {
-      const group = groupLabel(state.grid.groupBy).toLowerCase();
-      el.scatterCaption.text(`Images grouped by ${group}, sorted with ${sortLabel(state.grid.sortBy).toLowerCase()}.`);
+      if (state.grid.groupBy === "embedding") {
+        el.scatterCaption.text("Images are assigned to the nearest open grid cell from their t-SNE position.");
+      } else {
+        const group = groupLabel(state.grid.groupBy).toLowerCase();
+        el.scatterCaption.text(`Images grouped by ${group}, sorted with ${sortLabel(state.grid.sortBy).toLowerCase()}.`);
+      }
     } else if (state.colorBy === "source") {
       el.scatterCaption.text("Colored by dataset label. Pan with drag, zoom with wheel.");
     } else if (state.colorBy === "agreement") {
@@ -522,6 +535,13 @@
   }
 
   function renderGrid() {
+    el.imageGrid.classed("embedding-mode", state.grid.groupBy === "embedding");
+    if (state.grid.groupBy === "embedding") {
+      renderEmbeddingGrid();
+      return;
+    }
+
+    el.imageGrid.selectAll(".embedding-grid-shell").remove();
     const groups = groupedGridData();
 
     el.imageGrid
@@ -601,12 +621,90 @@
       mergedTiles.select(".tile-badge")
         .classed("match", (d) => d.labelMatch)
         .classed("mismatch", (d) => !d.labelMatch)
-        .text((d) => `${fmtPercent(d.probability)} · ${d.labelMatch ? "match" : "check"}`);
+        .text((d) => `${fmtPercent(d.probability)} - ${d.labelMatch ? "match" : "review"}`);
 
       tiles.exit().remove();
     });
 
     sections.exit().remove();
+  }
+
+  function renderEmbeddingGrid() {
+    el.imageGrid.selectAll(".grid-section").remove();
+    const layout = embeddingGridLayout(state.visible);
+
+    el.imageGrid
+      .selectAll(".grid-empty")
+      .data(layout.items.length ? [] : [null])
+      .join("div")
+      .attr("class", "grid-empty empty-state")
+      .text("No images match the current filters.");
+
+    const shell = el.imageGrid
+      .selectAll(".embedding-grid-shell")
+      .data(layout.items.length ? [layout] : []);
+
+    const shellEnter = shell.enter()
+      .append("section")
+      .attr("class", "embedding-grid-shell");
+
+    const header = shellEnter.append("div").attr("class", "grid-section-header");
+    header.append("h3").attr("class", "grid-section-title");
+    header.append("span").attr("class", "grid-section-count");
+    shellEnter.append("div").attr("class", "embedding-grid");
+
+    const mergedShell = shellEnter.merge(shell);
+    mergedShell.select(".grid-section-title").text("Embedding grid");
+    mergedShell.select(".grid-section-count")
+      .text(`${layout.items.length} images · ${layout.columns} x ${layout.rows}`);
+
+    const grid = mergedShell.select(".embedding-grid")
+      .style("--embedding-columns", layout.columns)
+      .style("--embedding-rows", layout.rows)
+      .style("--embedding-cell-size", `${state.grid.tileSize}px`);
+
+    const tiles = grid
+      .selectAll(".embedding-tile")
+      .data(layout.items, (d) => d.datum.id);
+
+    const tilesEnter = tiles.enter()
+      .append("button")
+      .attr("type", "button")
+      .attr("class", "embedding-tile")
+      .on("mouseenter", (event, d) => showTooltip(event, d.datum))
+      .on("mousemove", moveTooltip)
+      .on("mouseleave", hideTooltip)
+      .on("click", (event, d) => {
+        event.stopPropagation();
+        state.activeDatum = d.datum;
+        state.selectedIds = new Set([d.datum.id]);
+        renderAll();
+      });
+
+    tilesEnter.append("img")
+      .attr("loading", "lazy")
+      .attr("alt", (d) => d.datum.image);
+    tilesEnter.append("span").attr("class", "embedding-tile-badge");
+
+    const mergedTiles = tilesEnter.merge(tiles);
+
+    mergedTiles
+      .style("grid-column", (d) => d.column + 1)
+      .style("grid-row", (d) => d.row + 1)
+      .style("border-color", (d) => color(labelForMode(d.datum)))
+      .classed("selected", (d) => state.selectedIds.has(d.datum.id))
+      .classed("match", (d) => d.datum.labelMatch)
+      .classed("mismatch", (d) => !d.datum.labelMatch);
+
+    mergedTiles.select("img")
+      .attr("src", (d) => d.datum.path)
+      .attr("alt", (d) => d.datum.image);
+
+    mergedTiles.select(".embedding-tile-badge")
+      .text((d) => fmtPercent(d.datum.probability));
+
+    tiles.exit().remove();
+    shell.exit().remove();
   }
 
   function renderBars() {
@@ -734,6 +832,7 @@
     el.detailConfidence.text(fmtPercent(datum.probability));
     el.detailSource.text(`${datum.sourceId} - ${datum.sourceLabel}`);
     el.detailAgreement.text(datum.labelStatus);
+    el.detailTop5.text(top5Label(datum));
     el.detailDate.text(datum.dateLabel);
   }
 
@@ -743,10 +842,10 @@
       .html(`
         <img src="${d.path}" alt="">
         <strong>${escapeHtml(d.image)}</strong><br>
-        Predicted: ${escapeHtml(d.predicted)}<br>
+        ImageNet prediction: ${escapeHtml(d.predicted)}<br>
         Confidence: ${fmtPercent(d.probability)}<br>
-        Source: ${escapeHtml(d.sourceName)}<br>
-        Check: ${escapeHtml(d.labelStatus)}<br>
+        Tiny ImageNet label: ${escapeHtml(d.sourceName)}<br>
+        Label comparison: ${escapeHtml(d.labelStatus)}<br>
         Date: ${escapeHtml(d.dateLabel)}
       `);
     moveTooltip(event);
@@ -768,6 +867,68 @@
   function selectedData() {
     if (!state.selectedIds.size) return [];
     return state.visible.filter((d) => state.selectedIds.has(d.id));
+  }
+
+  function embeddingGridLayout(data) {
+    if (!data.length) return { columns: 1, rows: 1, items: [] };
+
+    const bounds = el.imageGrid.node().getBoundingClientRect();
+    const availableWidth = Math.max(320, bounds.width - 32);
+    const cell = Math.max(64, state.grid.tileSize);
+    const columns = Math.max(1, Math.floor(availableWidth / cell));
+    const rows = Math.ceil(data.length / columns);
+    const xExtent = d3.extent(data, (d) => d.x);
+    const yExtent = d3.extent(data, (d) => d.y);
+    const xSpan = xExtent[1] - xExtent[0] || 1;
+    const ySpan = yExtent[1] - yExtent[0] || 1;
+    const occupied = new Set();
+    const cells = d3.range(columns * rows).map((index) => ({
+      column: index % columns,
+      row: Math.floor(index / columns)
+    }));
+
+    const sorted = data.slice().sort((a, b) => {
+      const ay = normalizedGridRow(a, yExtent, ySpan, rows);
+      const by = normalizedGridRow(b, yExtent, ySpan, rows);
+      const ax = normalizedGridColumn(a, xExtent, xSpan, columns);
+      const bx = normalizedGridColumn(b, xExtent, xSpan, columns);
+      return d3.ascending(ay, by) || d3.ascending(ax, bx) || compareForGrid(a, b);
+    });
+
+    const items = sorted.map((datum) => {
+      const targetColumn = normalizedGridColumn(datum, xExtent, xSpan, columns);
+      const targetRow = normalizedGridRow(datum, yExtent, ySpan, rows);
+      const best = cells
+        .filter((cellInfo) => !occupied.has(cellKey(cellInfo.column, cellInfo.row)))
+        .sort((a, b) => {
+          const da = gridDistance(a, targetColumn, targetRow);
+          const db = gridDistance(b, targetColumn, targetRow);
+          return d3.ascending(da, db) || d3.ascending(a.row, b.row) || d3.ascending(a.column, b.column);
+        })[0];
+
+      occupied.add(cellKey(best.column, best.row));
+      return { datum, column: best.column, row: best.row };
+    });
+
+    return { columns, rows, items };
+  }
+
+  function normalizedGridColumn(d, extent, span, columns) {
+    return Math.max(0, Math.min(columns - 1, Math.round(((d.x - extent[0]) / span) * (columns - 1))));
+  }
+
+  function normalizedGridRow(d, extent, span, rows) {
+    return Math.max(0, Math.min(rows - 1, Math.round(((extent[1] - d.y) / span) * (rows - 1))));
+  }
+
+  function gridDistance(cell, targetColumn, targetRow) {
+    const dx = cell.column - targetColumn;
+    const dy = cell.row - targetRow;
+    return dx * dx + dy * dy;
+  }
+
+  function cellKey(column, row) {
+    return `${column}:${row}`;
   }
 
   function groupedGridData() {
@@ -805,7 +966,7 @@
 
   function labelForMode(d) {
     if (state.colorBy === "source") return d.sourceName;
-    if (state.colorBy === "agreement") return d.labelMatch ? "Matches source label" : "Different from source label";
+    if (state.colorBy === "agreement") return d.labelStatus;
     return d.predicted;
   }
 
@@ -820,6 +981,7 @@
   }
 
   function groupLabel(value) {
+    if (value === "embedding") return "embedding position";
     if (value === "predicted") return "model prediction";
     if (value === "agreement") return "prediction check";
     if (value === "none") return "a single grid";
@@ -849,6 +1011,14 @@
   function truncate(value, max) {
     const text = String(value);
     return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+  }
+
+  function top5Label(datum) {
+    if (!datum.top5.length) return "Not available in this data file";
+    return datum.top5
+      .slice(0, 5)
+      .map((item) => `${item.className} ${fmtPercent(item.probability)}`)
+      .join(", ");
   }
 
   function escapeHtml(value) {
