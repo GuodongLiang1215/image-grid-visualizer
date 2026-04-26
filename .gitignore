@@ -11,16 +11,11 @@ photos/
 
 # Third-party learning materials copied from external repos
 materials about D3/
-feature_extraction/tsnejs/.git/
+feature_extraction/
 
 # Old experiments kept locally but not needed for the GitHub demo
 display/
-feature_extraction/
 image grading/
-
-# Keep the lightweight, GitHub-ready demo data instead
-!data/
-!data/**
 
 # Python / Node cache
 __pycache__/
